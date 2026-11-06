@@ -98,5 +98,62 @@ def get_weather_data():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+@app.route('/api/telemetry/traffic', methods=['POST'])
+def add_traffic_data():
+    data = request.json
+    # Auto-generate a UTC timestamp
+    data['timestamp'] = datetime.utcnow().isoformat() + "Z"
+    try:
+        traffic_collection.insert_one(data)
+        return jsonify({"message": f"Traffic data for {data.get('node_id')} recorded in MongoDB Atlas"}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/api/telemetry/traffic', methods=['GET'])
+def get_traffic_data():
+    try:
+        # Fetch the 50 most recent traffic logs, excluding the MongoDB _id
+        results = list(traffic_collection.find({}, {'_id': 0}).sort('timestamp', -1).limit(50))
+        return jsonify(results), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/api/maintenance/details', methods=['GET'])
+def get_maintenance_details():
+    query = text("""
+        SELECT m.log_id, m.action_taken, m.log_date,
+               s.node_id, s.sensor_type,
+               u.full_name AS technician_name
+        FROM maintenance_logs m
+        JOIN sensor_nodes s ON m.node_id = s.node_id
+        JOIN users u ON m.user_id = u.user_id
+        ORDER BY m.log_date DESC
+    """)
+    try:
+        result = db.session.execute(query).mappings().all()
+        logs = [dict(row) for row in result]
+        return jsonify(logs), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/api/telemetry/analytics', methods=['GET'])
+def get_weather_analytics():
+    pipeline = [
+        {"$group": {
+            "_id": "$node_id",
+            "avg_temp": {"$avg": "$metrics.temperature_c"},
+            "avg_humidity": {"$avg": "$metrics.humidity_percent"},
+            "reading_count": {"$sum": 1}
+        }},
+        {"$sort": {"avg_temp": -1}} # Sorts to show the hottest zones first
+    ]
+    try:
+        results = list(weather_collection.aggregate(pipeline))
+        return jsonify(results), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    # 0.0.0.0 tells Flask to listen on all network interfaces, not just localhost
+    app.run(host='0.0.0.0', port=5000, debug=True)
